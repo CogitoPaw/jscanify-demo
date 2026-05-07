@@ -661,6 +661,9 @@
 
               <div class="info yellow" id="warn-info" style="display:none"></div>
               <div class="info red" id="err-info" style="display:none"></div>
+              <div class="info" id="debug-info"
+                style="display:none;white-space:pre-wrap;font-family:'JetBrains Mono',monospace;font-size:.72rem;color:#0f172a;background:#eef7ff;border:1px dashed rgba(14,165,233,.35)">
+              </div>
 
               <div class="btns">
                 <button class="btn" onclick="resetCorners()">↺ 重置为全图</button>
@@ -783,7 +786,14 @@
     let camDetectBusy = false;
     let camTickCount = 0;
     let camLastQuad = null;
+    let camLastScore = -Infinity;
+    let camNoHitFrames = 0;
+    let pendingCameraHintQuad = null;
     const CAM_DETECT_INTERVAL = 3;
+    const CAM_STABLE_DRIFT = 0.12;
+    const CAM_REPLACE_SCORE_DELTA = 0.18;
+    const CAM_CLEAR_MISS_COUNT = 4;
+    const DEBUG_MODE = /(?:\?|&)debug=1(?:&|$)/.test(location.search);
 
     const ORDER = ['tl', 'tr', 'br', 'bl'];
     const HANDLE_R = 11;
@@ -841,10 +851,15 @@
       const autoDetectAfterLoad = opts.autoDetectAfterLoad !== false;
       const switchToUploadTab = !!opts.switchToUploadTab;
       const sourceKind = opts.sourceKind || 'upload';
+      const initialCorners = opts.initialCorners || null;
       if (switchToUploadTab) setTab('upload');
       srcImage = source;
       srcOrigin = sourceKind;
       setupEditor(source);
+      if (initialCorners) {
+        corners = cloneQuad(initialCorners);
+        drawOverlay();
+      }
       stepTo(2);
       if (!autoDetectAfterLoad) return;
       if (cvReady) {
@@ -1042,7 +1057,36 @@
       hideInfo();
       setTimeout(() => {
         try {
-          const detected = detectCornersSmart(srcImage, { cameraStrict: srcOrigin === 'camera-capture' });
+          const hintQuad = pendingCameraHintQuad;
+          pendingCameraHintQuad = null;
+          let detected = detectCornersSmart(srcImage, { cameraStrict: srcOrigin === 'camera-capture', debug: DEBUG_MODE });
+          if (srcOrigin === 'camera-capture' && detected && detected.source !== 'full-image') {
+            const sz = getSourceSize(srcImage);
+            // Camera rescue pass: when first pass is suspicious, rerun with inner-priority constraints.
+            if (isSuspiciousCameraQuad(detected.corners, sz.w, sz.h)) {
+              const rescued = detectCornersSmart(srcImage, { cameraStrict: true, preferInner: true, debug: DEBUG_MODE });
+              if (rescued && rescued.source !== 'full-image' && rescued.corners) {
+                const rescuedSuspicious = isSuspiciousCameraQuad(rescued.corners, sz.w, sz.h);
+                const betterScore = (rescued.score || -999) > (detected.score || -999) - 0.08;
+                if (!rescuedSuspicious || betterScore) detected = rescued;
+              }
+            }
+            // If available, compare against the stable camera-frame hint captured before snapshot.
+            if (hintQuad && isReasonableQuad(hintQuad, sz.w, sz.h, { cameraStrict: true, preferInner: true })) {
+              const detectedSuspicious = isSuspiciousCameraQuad(detected.corners, sz.w, sz.h);
+              const hintSuspicious = isSuspiciousCameraQuad(hintQuad, sz.w, sz.h);
+              const hintScore = scoreQuad([hintQuad.tl, hintQuad.tr, hintQuad.br, hintQuad.bl], sz.w, sz.h, quadArea(hintQuad), { cameraStrict: true, preferInner: true });
+              const detectedScore = typeof detected.score === 'number' ? detected.score : -999;
+              if ((detectedSuspicious && !hintSuspicious) || hintScore > detectedScore + 0.22) {
+                detected = {
+                  corners: cloneQuad(hintQuad),
+                  source: 'camera-hint',
+                  score: hintScore,
+                  debugCandidates: detected.debugCandidates
+                };
+              }
+            }
+          }
           if (!detected) throw new Error('no contour');
           corners = detected.corners;
 
@@ -1056,6 +1100,7 @@
           document.getElementById('corner-tag').textContent = '自动检测 ' + pct + '%';
           drawOverlay();
           scheduleLivePreview(true);
+          renderDebugInfo('auto', detected);
 
           if (detected.source === 'full-image') {
             showWarn('⚠ 未稳定识别到文档边缘，已回退为全图。请手动拖动 4 个角点后再执行矫正。');
@@ -1080,6 +1125,7 @@
           document.getElementById('m-conf').textContent = '100%';
           scheduleLivePreview(true);
           toast('自动检测失败，已回退为全图可手动调整', 'bad');
+          renderDebugInfo('auto', null);
         }
         document.getElementById('sdot').className = 'dot ready';
       }, 60);
@@ -1093,40 +1139,46 @@
 
     function detectCornersSmart(source, opts = {}) {
       const cameraStrict = !!opts.cameraStrict;
+      const preferInner = !!opts.preferInner;
+      const debug = !!opts.debug;
       const { w, h } = getSourceSize(source);
       if (!w || !h) return null;
       const byJscanify = detectByJscanify(source);
-      const byCv = detectByCvFallback(source, { cameraStrict });
+      const byCv = detectByCvFallback(source, { cameraStrict, preferInner });
       const candidates = [];
 
-      if (byJscanify && isReasonableQuad(byJscanify, w, h, { cameraStrict })) {
+      if (byJscanify && isReasonableQuad(byJscanify, w, h, { cameraStrict, preferInner })) {
+        const breakdown = scoreQuadBreakdown([byJscanify.tl, byJscanify.tr, byJscanify.br, byJscanify.bl], w, h, quadArea(byJscanify), { cameraStrict, preferInner });
         candidates.push({
           source: 'jscanify',
           corners: byJscanify,
-          score: scoreQuad(
-            [byJscanify.tl, byJscanify.tr, byJscanify.br, byJscanify.bl],
-            w,
-            h,
-            quadArea(byJscanify),
-            { cameraStrict }
-          )
+          score: breakdown.total,
+          breakdown
         });
       }
-      if (byCv && isReasonableQuad(byCv, w, h, { cameraStrict })) {
+      if (byCv && isReasonableQuad(byCv, w, h, { cameraStrict, preferInner })) {
+        const breakdown = scoreQuadBreakdown([byCv.tl, byCv.tr, byCv.br, byCv.bl], w, h, quadArea(byCv), { cameraStrict, preferInner });
         candidates.push({
           source: 'cv-fallback',
           corners: byCv,
-          score: scoreQuad([byCv.tl, byCv.tr, byCv.br, byCv.bl], w, h, quadArea(byCv), { cameraStrict })
+          score: breakdown.total,
+          breakdown
         });
       }
 
       if (candidates.length) {
         candidates.sort((a, b) => b.score - a.score);
-        return { corners: candidates[0].corners, source: candidates[0].source };
+        const best = candidates[0];
+        return {
+          corners: best.corners,
+          source: best.source,
+          score: best.score,
+          debugCandidates: debug ? candidates.slice(0, 3).map(c => ({ source: c.source, score: c.score, breakdown: c.breakdown })) : undefined
+        };
       }
-      if (byCv) return { corners: byCv, source: 'cv-fallback' };
-      if (byJscanify) return { corners: byJscanify, source: 'jscanify' };
-      return { corners: fullImageCorners(source), source: 'full-image' };
+      if (byCv) return { corners: byCv, source: 'cv-fallback', score: -999 };
+      if (byJscanify) return { corners: byJscanify, source: 'jscanify', score: -999 };
+      return { corners: fullImageCorners(source), source: 'full-image', score: -999 };
     }
 
     function detectByJscanify(source) {
@@ -1155,6 +1207,7 @@
 
     function detectByCvFallback(source, opts = {}) {
       const cameraStrict = !!opts.cameraStrict;
+      const preferInner = !!opts.preferInner;
       const { w, h } = getSourceSize(source);
       if (!w || !h) return null;
       const tmp = document.createElement('canvas');
@@ -1254,7 +1307,17 @@
                   { x: pts[6], y: pts[7] }
                 ]);
                 if (q) {
-                  const s = scoreQuad(q, src.cols, src.rows, area, { cameraStrict }) + (suppressFrameBorder ? 0.12 : 0);
+                  if (cameraStrict) {
+                    const bHits = borderHitCount(q, src.cols, src.rows, 0.012);
+                    const b = quadBounds(q);
+                    const bAreaPct = ((b.maxX - b.minX) * (b.maxY - b.minY)) / (src.cols * src.rows);
+                    if ((bHits >= 3 && bAreaPct > 0.5) || (bHits >= 2 && bAreaPct > 0.72)) {
+                      approx.delete();
+                      cnt.delete();
+                      continue;
+                    }
+                  }
+                  const s = scoreQuad(q, src.cols, src.rows, area, { cameraStrict, preferInner }) + (suppressFrameBorder ? 0.12 : 0);
                   if (s > bestScore) { bestScore = s; best = q; }
                 }
               }
@@ -1273,7 +1336,7 @@
           br: { x: best[2].x * invScale, y: best[2].y * invScale },
           bl: { x: best[3].x * invScale, y: best[3].y * invScale }
         };
-        if (isReasonableQuad(quad, srcFull.cols, srcFull.rows, { cameraStrict })) return quad;
+        if (isReasonableQuad(quad, srcFull.cols, srcFull.rows, { cameraStrict, preferInner })) return quad;
         // 兜底：只要像四边形且面积不离谱，也允许返回供用户手调
         const areaPct = quadArea(quad) / (srcFull.cols * srcFull.rows);
         if (areaPct >= 0.02 && areaPct <= 0.98) return quad;
@@ -1324,8 +1387,48 @@
       return pts.filter(p => p.x < margin || p.x > (w - margin) || p.y < margin || p.y > (h - margin)).length;
     }
 
-    function scoreQuad(pts, w, h, areaHint, opts = {}) {
+    function quadBounds(pts) {
+      const xs = pts.map(p => p.x);
+      const ys = pts.map(p => p.y);
+      return {
+        minX: Math.min(...xs),
+        maxX: Math.max(...xs),
+        minY: Math.min(...ys),
+        maxY: Math.max(...ys)
+      };
+    }
+
+    function cloneQuad(q) {
+      if (!q) return null;
+      return {
+        tl: { x: q.tl.x, y: q.tl.y },
+        tr: { x: q.tr.x, y: q.tr.y },
+        br: { x: q.br.x, y: q.br.y },
+        bl: { x: q.bl.x, y: q.bl.y }
+      };
+    }
+
+    function quadBoxAreaPct(pts, w, h) {
+      const b = quadBounds(pts);
+      return ((b.maxX - b.minX) * (b.maxY - b.minY)) / (w * h);
+    }
+
+    function isSuspiciousCameraQuad(c, w, h) {
+      if (!c || !w || !h) return true;
+      const pts = [c.tl, c.tr, c.br, c.bl];
+      const areaPct = quadArea(c) / (w * h);
+      const boxAreaPct = quadBoxAreaPct(pts, w, h);
+      const borderHits = borderHitCount(pts, w, h, 0.015);
+      return (
+        (borderHits >= 2 && areaPct > 0.42) ||
+        (borderHits >= 2 && boxAreaPct > 0.62) ||
+        (borderHits >= 1 && areaPct > 0.58)
+      );
+    }
+
+    function scoreQuadBreakdown(pts, w, h, areaHint, opts = {}) {
       const cameraStrict = !!opts.cameraStrict;
+      const preferInner = !!opts.preferInner;
       const q = { tl: pts[0], tr: pts[1], br: pts[2], bl: pts[3] };
       const areaPct = quadArea(q) / (w * h);
       const angle = rightAngleScore(pts);
@@ -1339,12 +1442,42 @@
       const targetArea = cameraStrict ? 0.24 : 0.3;
       const areaSweetSpot = 1 - Math.min(1, Math.abs(areaPct - targetArea) / 0.45);
       const contourBoost = areaHint > 0 ? Math.min(areaHint / (w * h * 0.3), 1.2) : 0.7;
+      const bounds = quadBounds(pts);
+      const boxW = Math.max(1, bounds.maxX - bounds.minX);
+      const boxH = Math.max(1, bounds.maxY - bounds.minY);
+      const boxAreaPct = (boxW * boxH) / (w * h);
       let borderPenalty = borderHits <= 2 ? borderHits * 0.32 : (0.64 + (borderHits - 2) * 0.78);
+      let cameraCoveragePenalty = 0;
       if (cameraStrict) {
         borderPenalty *= 1.35;
         if (borderHits >= 2 && areaPct > 0.42) borderPenalty += 0.9;
+        if (borderHits >= 2 && boxAreaPct > 0.58) cameraCoveragePenalty += (boxAreaPct - 0.58) * 2.4;
+        if (borderHits >= 2 && (boxW / w > 0.92 || boxH / h > 0.92)) cameraCoveragePenalty += 0.9;
+        if (borderHits >= 1 && areaPct > 0.55) cameraCoveragePenalty += 0.45;
+        if (preferInner) {
+          if (borderHits >= 1) cameraCoveragePenalty += 0.35;
+          if (boxAreaPct > 0.5) cameraCoveragePenalty += (boxAreaPct - 0.5) * 2.0;
+        }
       }
-      return areaScore * 0.95 + areaSweetSpot * 0.55 + angle * 1.25 + contourBoost + pairBalance * 0.85 + centerScore * 0.2 - borderPenalty;
+      const total = areaScore * 0.95 + areaSweetSpot * 0.55 + angle * 1.25 + contourBoost + pairBalance * 0.85 + centerScore * 0.2 - borderPenalty - cameraCoveragePenalty;
+      return {
+        total,
+        areaPct,
+        areaScore,
+        areaSweetSpot,
+        angle,
+        pairBalance,
+        centerScore,
+        borderHits,
+        borderPenalty,
+        cameraCoveragePenalty,
+        boxAreaPct,
+        contourBoost
+      };
+    }
+
+    function scoreQuad(pts, w, h, areaHint, opts = {}) {
+      return scoreQuadBreakdown(pts, w, h, areaHint, opts).total;
     }
 
     function rightAngleScore(pts) {
@@ -1363,6 +1496,7 @@
 
     function isReasonableQuad(c, w, h, opts = {}) {
       const cameraStrict = !!opts.cameraStrict;
+      const preferInner = !!opts.preferInner;
       const areaPct = quadArea(c) / (w * h);
       if (areaPct < (cameraStrict ? 0.02 : 0.015) || areaPct > (cameraStrict ? 0.92 : 0.98)) return false;
       const pts = [c.tl, c.tr, c.br, c.bl];
@@ -1378,9 +1512,14 @@
       const pairBalance = pairBalanceScore(pts);
       if (pairBalance < (cameraStrict ? 0.25 : 0.2)) return false;
       const borderHits = borderHitCount(pts, w, h, 0.015);
+      const bounds = quadBounds(pts);
+      const boxAreaPct = ((bounds.maxX - bounds.minX) * (bounds.maxY - bounds.minY)) / (w * h);
       if (cameraStrict) {
         if (borderHits >= 3) return false;
         if (borderHits >= 2 && areaPct > 0.45) return false;
+        if (borderHits >= 2 && boxAreaPct > 0.72) return false;
+        if (preferInner && borderHits >= 2) return false;
+        if (preferInner && boxAreaPct > 0.65) return false;
       }
       if (borderHits >= 4 && areaPct < 0.85) return false;
       if (borderHits >= 3 && areaPct < 0.7) return false;
@@ -1451,6 +1590,28 @@
       const el = document.getElementById('err-info');
       el.textContent = msg; el.style.display = 'block';
       document.getElementById('hint-info').style.display = 'none';
+    }
+
+    function renderDebugInfo(scope, detected) {
+      if (!DEBUG_MODE) return;
+      const el = document.getElementById('debug-info');
+      if (!el) return;
+      if (!detected || !detected.debugCandidates || !detected.debugCandidates.length) {
+        el.style.display = 'block';
+        el.textContent = '[debug] 无候选或仅回退全图';
+        return;
+      }
+      const rows = detected.debugCandidates.map((c, i) => {
+        const b = c.breakdown || {};
+        return [
+          `#${i + 1} ${c.source} score=${(c.score || 0).toFixed(3)}`,
+          `  area=${((b.areaPct || 0) * 100).toFixed(1)}% angle=${(b.angle || 0).toFixed(3)} pair=${(b.pairBalance || 0).toFixed(3)}`,
+          `  center=${(b.centerScore || 0).toFixed(3)} box=${((b.boxAreaPct || 0) * 100).toFixed(1)}% borderHits=${b.borderHits || 0}`,
+          `  penalty=${(b.borderPenalty || 0).toFixed(3)} camPenalty=${(b.cameraCoveragePenalty || 0).toFixed(3)}`
+        ].join('\n');
+      }).join('\n');
+      el.style.display = 'block';
+      el.textContent = `[debug:${scope}] source=${detected.source} score=${(detected.score || 0).toFixed(3)}\n${rows}`;
     }
 
     /* ═══════════════════════════════════
@@ -1539,6 +1700,7 @@
     function clearImage() {
       srcImage = null; corners = null;
       pendingAutoDetect = false;
+      pendingCameraHintQuad = null;
       uzone.style.display = 'flex';
       document.getElementById('editor-section').style.display = 'none';
       document.getElementById('result-canvas').style.display = 'none';
@@ -1554,6 +1716,8 @@
       document.getElementById('corner-tag').textContent = '未检测';
       document.getElementById('m-conf').textContent = '—';
       document.getElementById('m-mode').textContent = '—';
+      const dbg = document.getElementById('debug-info');
+      if (dbg) dbg.style.display = 'none';
       fileInp.value = '';
       stepTo(1);
     }
@@ -1743,6 +1907,27 @@
       ctx.restore();
     }
 
+    function quadCenter(c) {
+      return {
+        x: (c.tl.x + c.tr.x + c.br.x + c.bl.x) / 4,
+        y: (c.tl.y + c.tr.y + c.br.y + c.bl.y) / 4
+      };
+    }
+
+    function quadNormalizedDrift(a, b, w, h) {
+      const ac = quadCenter(a), bc = quadCenter(b);
+      const diag = Math.max(1, Math.hypot(w, h));
+      return Math.hypot(ac.x - bc.x, ac.y - bc.y) / diag;
+    }
+
+    function shouldReplaceCamQuad(nextQuad, nextScore, w, h) {
+      if (!camLastQuad) return true;
+      const drift = quadNormalizedDrift(nextQuad, camLastQuad, w, h);
+      if (drift <= CAM_STABLE_DRIFT) return true;
+      if (nextScore > camLastScore + CAM_REPLACE_SCORE_DELTA) return true;
+      return false;
+    }
+
     function camTick() {
       const vid = document.getElementById('vid'), hi = document.getElementById('cam-hi');
       if (!vid || !hi || vid.readyState < 2 || !hi.width || !hi.height) return;
@@ -1752,10 +1937,29 @@
       if (!camDetectBusy && camTickCount % CAM_DETECT_INTERVAL === 0) {
         camDetectBusy = true;
         try {
-          const detected = detectCornersSmart(hi, { cameraStrict: true });
-          camLastQuad = detected && detected.source !== 'full-image' ? detected.corners : null;
+          const detected = detectCornersSmart(hi, { cameraStrict: true, debug: DEBUG_MODE });
+          renderDebugInfo('camera', detected);
+          if (detected && detected.source !== 'full-image' && detected.corners) {
+            const nextScore = typeof detected.score === 'number' ? detected.score : -999;
+            // Stabilizer: avoid replacing a good box with a short-lived outlier frame.
+            if (shouldReplaceCamQuad(detected.corners, nextScore, hi.width, hi.height)) {
+              camLastQuad = detected.corners;
+              camLastScore = nextScore;
+            }
+            camNoHitFrames = 0;
+          } else {
+            camNoHitFrames++;
+            if (camNoHitFrames >= CAM_CLEAR_MISS_COUNT) {
+              camLastQuad = null;
+              camLastScore = -Infinity;
+            }
+          }
         } catch (_) {
-          camLastQuad = null;
+          camNoHitFrames++;
+          if (camNoHitFrames >= CAM_CLEAR_MISS_COUNT) {
+            camLastQuad = null;
+            camLastScore = -Infinity;
+          }
         } finally {
           camDetectBusy = false;
         }
@@ -1770,6 +1974,8 @@
       camDetectBusy = false;
       camTickCount = 0;
       camLastQuad = null;
+      camLastScore = -Infinity;
+      camNoHitFrames = 0;
       if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
       const vid = document.getElementById('vid');
       const hi = document.getElementById('cam-hi');
@@ -1803,7 +2009,13 @@
       const dataUrl = tmp.toDataURL('image/png');
       const img = new Image();
       img.onload = () => {
-        enterEditorWithSource(img, { autoDetectAfterLoad: true, switchToUploadTab: true, sourceKind: 'camera-capture' });
+        pendingCameraHintQuad = camLastQuad ? cloneQuad(camLastQuad) : null;
+        enterEditorWithSource(img, {
+          autoDetectAfterLoad: true,
+          switchToUploadTab: true,
+          sourceKind: 'camera-capture',
+          initialCorners: pendingCameraHintQuad
+        });
         toast('✓ 已截取并自动识别，可手动拖动角点微调', 'ok');
       };
       img.onerror = () => toast('截取失败，请重试', 'bad');
