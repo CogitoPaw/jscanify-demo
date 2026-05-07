@@ -656,14 +656,13 @@
               </div>
 
               <div class="info green" id="hint-info">
-                💡 拖动 4 个<b>绿色圆点</b>精确框住文档四角 &nbsp;|&nbsp; 或点击"自动检测"让算法找边缘
+                💡 上传/拍照后会自动识别文档边缘；如有偏差，拖动 4 个<b>绿色圆点</b>微调四角即可
               </div>
 
               <div class="info yellow" id="warn-info" style="display:none"></div>
               <div class="info red" id="err-info" style="display:none"></div>
 
               <div class="btns">
-                <button class="btn primary" onclick="autoDetect()">⚡ 自动检测角点</button>
                 <button class="btn" onclick="resetCorners()">↺ 重置为全图</button>
                 <button class="btn red" onclick="clearImage()">✕ 清除图片</button>
               </div>
@@ -738,7 +737,7 @@
             <div class="btns">
               <button class="btn primary" id="btn-cs" onclick="startCam()">启动摄像头</button>
               <button class="btn" id="btn-cx" onclick="stopCam()" disabled>停止</button>
-              <button class="btn" id="btn-cc" onclick="captureCam()" disabled>📷 截取并手动调整</button>
+              <button class="btn" id="btn-cc" onclick="captureCam()" disabled>📷 截取并自动识别</button>
             </div>
           </div>
         </div>
@@ -771,6 +770,7 @@
     ═══════════════════════════════════ */
     let cvReady = false, scanner = null;
     let srcImage = null;      // original Image element
+    let srcOrigin = 'upload'; // 'upload' | 'camera-capture'
     let dispScale = 1;        // display pixels per source pixel
     let corners = null;       // {tl,tr,bl,br} in SOURCE IMAGE coords
     let dragIdx = -1;
@@ -780,6 +780,10 @@
     let livePreviewBusy = false;
     let livePreviewQueued = false;
     let pendingAutoDetect = false;
+    let camDetectBusy = false;
+    let camTickCount = 0;
+    let camLastQuad = null;
+    const CAM_DETECT_INTERVAL = 3;
 
     const ORDER = ['tl', 'tr', 'br', 'bl'];
     const HANDLE_R = 11;
@@ -828,17 +832,27 @@
       const url = URL.createObjectURL(file);
       const img = new Image();
       img.onload = () => {
-        srcImage = img;
-        setupEditor(img);
-        stepTo(2);
-        if (cvReady) {
-          setTimeout(() => autoDetect({ silentNoCv: true }), 30);
-        } else {
-          pendingAutoDetect = true;
-          showWarn('扫描引擎加载中，完成后会自动检测角点...');
-        }
+        enterEditorWithSource(img, { autoDetectAfterLoad: true, switchToUploadTab: false, sourceKind: 'upload' });
       };
       img.src = url;
+    }
+
+    function enterEditorWithSource(source, opts = {}) {
+      const autoDetectAfterLoad = opts.autoDetectAfterLoad !== false;
+      const switchToUploadTab = !!opts.switchToUploadTab;
+      const sourceKind = opts.sourceKind || 'upload';
+      if (switchToUploadTab) setTab('upload');
+      srcImage = source;
+      srcOrigin = sourceKind;
+      setupEditor(source);
+      stepTo(2);
+      if (!autoDetectAfterLoad) return;
+      if (cvReady) {
+        setTimeout(() => autoDetect({ silentNoCv: true }), 30);
+      } else {
+        pendingAutoDetect = true;
+        showWarn('扫描引擎加载中，完成后会自动检测角点...');
+      }
     }
 
     /* ═══════════════════════════════════
@@ -1028,12 +1042,13 @@
       hideInfo();
       setTimeout(() => {
         try {
-          const detected = detectCornersSmart(srcImage);
+          const detected = detectCornersSmart(srcImage, { cameraStrict: srcOrigin === 'camera-capture' });
           if (!detected) throw new Error('no contour');
           corners = detected.corners;
 
           const area = quadArea(corners);
-          const imgArea = srcImage.naturalWidth * srcImage.naturalHeight;
+          const s = getSourceSize(srcImage);
+          const imgArea = s.w * s.h;
           const pct = Math.round(area / imgArea * 100);
           document.getElementById('m-conf').textContent = pct + '%';
           document.getElementById('m-mode').textContent = '自动';
@@ -1070,14 +1085,21 @@
       }, 60);
     }
 
-    function detectCornersSmart(img) {
-      const w = img.naturalWidth;
-      const h = img.naturalHeight;
-      const byJscanify = detectByJscanify(img);
-      const byCv = detectByCvFallback(img);
+    function getSourceSize(source) {
+      const w = source ? (source.naturalWidth || source.videoWidth || source.width || 0) : 0;
+      const h = source ? (source.naturalHeight || source.videoHeight || source.height || 0) : 0;
+      return { w, h };
+    }
+
+    function detectCornersSmart(source, opts = {}) {
+      const cameraStrict = !!opts.cameraStrict;
+      const { w, h } = getSourceSize(source);
+      if (!w || !h) return null;
+      const byJscanify = detectByJscanify(source);
+      const byCv = detectByCvFallback(source, { cameraStrict });
       const candidates = [];
 
-      if (byJscanify && isReasonableQuad(byJscanify, w, h)) {
+      if (byJscanify && isReasonableQuad(byJscanify, w, h, { cameraStrict })) {
         candidates.push({
           source: 'jscanify',
           corners: byJscanify,
@@ -1085,15 +1107,16 @@
             [byJscanify.tl, byJscanify.tr, byJscanify.br, byJscanify.bl],
             w,
             h,
-            quadArea(byJscanify)
+            quadArea(byJscanify),
+            { cameraStrict }
           )
         });
       }
-      if (byCv && isReasonableQuad(byCv, w, h)) {
+      if (byCv && isReasonableQuad(byCv, w, h, { cameraStrict })) {
         candidates.push({
           source: 'cv-fallback',
           corners: byCv,
-          score: scoreQuad([byCv.tl, byCv.tr, byCv.br, byCv.bl], w, h, quadArea(byCv))
+          score: scoreQuad([byCv.tl, byCv.tr, byCv.br, byCv.bl], w, h, quadArea(byCv), { cameraStrict })
         });
       }
 
@@ -1103,13 +1126,15 @@
       }
       if (byCv) return { corners: byCv, source: 'cv-fallback' };
       if (byJscanify) return { corners: byJscanify, source: 'jscanify' };
-      return { corners: fullImageCorners(img), source: 'full-image' };
+      return { corners: fullImageCorners(source), source: 'full-image' };
     }
 
-    function detectByJscanify(img) {
+    function detectByJscanify(source) {
+      const { w, h } = getSourceSize(source);
+      if (!w || !h) return null;
       const tmp = document.createElement('canvas');
-      tmp.width = img.naturalWidth; tmp.height = img.naturalHeight;
-      tmp.getContext('2d').drawImage(img, 0, 0);
+      tmp.width = w; tmp.height = h;
+      tmp.getContext('2d').drawImage(source, 0, 0, w, h);
       const mat = cv.imread(tmp);
       try {
         const contour = scanner.findPaperContour(mat);
@@ -1128,10 +1153,13 @@
       }
     }
 
-    function detectByCvFallback(img) {
+    function detectByCvFallback(source, opts = {}) {
+      const cameraStrict = !!opts.cameraStrict;
+      const { w, h } = getSourceSize(source);
+      if (!w || !h) return null;
       const tmp = document.createElement('canvas');
-      tmp.width = img.naturalWidth; tmp.height = img.naturalHeight;
-      tmp.getContext('2d').drawImage(img, 0, 0);
+      tmp.width = w; tmp.height = h;
+      tmp.getContext('2d').drawImage(source, 0, 0, w, h);
 
       const srcFull = cv.imread(tmp);
       const src = new cv.Mat();
@@ -1226,7 +1254,7 @@
                   { x: pts[6], y: pts[7] }
                 ]);
                 if (q) {
-                  const s = scoreQuad(q, src.cols, src.rows, area) + (suppressFrameBorder ? 0.12 : 0);
+                  const s = scoreQuad(q, src.cols, src.rows, area, { cameraStrict }) + (suppressFrameBorder ? 0.12 : 0);
                   if (s > bestScore) { bestScore = s; best = q; }
                 }
               }
@@ -1245,7 +1273,7 @@
           br: { x: best[2].x * invScale, y: best[2].y * invScale },
           bl: { x: best[3].x * invScale, y: best[3].y * invScale }
         };
-        if (isReasonableQuad(quad, srcFull.cols, srcFull.rows)) return quad;
+        if (isReasonableQuad(quad, srcFull.cols, srcFull.rows, { cameraStrict })) return quad;
         // 兜底：只要像四边形且面积不离谱，也允许返回供用户手调
         const areaPct = quadArea(quad) / (srcFull.cols * srcFull.rows);
         if (areaPct >= 0.02 && areaPct <= 0.98) return quad;
@@ -1283,25 +1311,39 @@
       return ordered;
     }
 
-    function scoreQuad(pts, w, h, areaHint) {
-      const q = { tl: pts[0], tr: pts[1], br: pts[2], bl: pts[3] };
-      const areaPct = quadArea(q) / (w * h);
-      const angle = rightAngleScore(pts);
+    function pairBalanceScore(pts) {
       const top = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
       const right = Math.hypot(pts[2].x - pts[1].x, pts[2].y - pts[1].y);
       const bottom = Math.hypot(pts[3].x - pts[2].x, pts[3].y - pts[2].y);
       const left = Math.hypot(pts[0].x - pts[3].x, pts[0].y - pts[3].y);
-      const pairBalance = (Math.min(top, bottom) / Math.max(top, bottom) + Math.min(left, right) / Math.max(left, right)) / 2;
+      return (Math.min(top, bottom) / Math.max(top, bottom) + Math.min(left, right) / Math.max(left, right)) / 2;
+    }
+
+    function borderHitCount(pts, w, h, ratio = 0.02) {
+      const margin = Math.max(10, Math.min(w, h) * ratio);
+      return pts.filter(p => p.x < margin || p.x > (w - margin) || p.y < margin || p.y > (h - margin)).length;
+    }
+
+    function scoreQuad(pts, w, h, areaHint, opts = {}) {
+      const cameraStrict = !!opts.cameraStrict;
+      const q = { tl: pts[0], tr: pts[1], br: pts[2], bl: pts[3] };
+      const areaPct = quadArea(q) / (w * h);
+      const angle = rightAngleScore(pts);
+      const pairBalance = pairBalanceScore(pts);
       const cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;
       const cy = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4;
       const centerDist = Math.hypot(cx - w / 2, cy - h / 2) / (Math.hypot(w, h) / 2);
       const centerScore = Math.max(0, 1 - centerDist);
-      const margin = Math.max(10, Math.min(w, h) * 0.02);
-      const borderHits = pts.filter(p => p.x < margin || p.x > (w - margin) || p.y < margin || p.y > (h - margin)).length;
+      const borderHits = borderHitCount(pts, w, h, 0.02);
       const areaScore = Math.min(areaPct / 0.35, 1.4);
-      const areaSweetSpot = 1 - Math.min(1, Math.abs(areaPct - 0.3) / 0.45);
+      const targetArea = cameraStrict ? 0.24 : 0.3;
+      const areaSweetSpot = 1 - Math.min(1, Math.abs(areaPct - targetArea) / 0.45);
       const contourBoost = areaHint > 0 ? Math.min(areaHint / (w * h * 0.3), 1.2) : 0.7;
-      const borderPenalty = borderHits <= 2 ? borderHits * 0.32 : (0.64 + (borderHits - 2) * 0.78);
+      let borderPenalty = borderHits <= 2 ? borderHits * 0.32 : (0.64 + (borderHits - 2) * 0.78);
+      if (cameraStrict) {
+        borderPenalty *= 1.35;
+        if (borderHits >= 2 && areaPct > 0.42) borderPenalty += 0.9;
+      }
       return areaScore * 0.95 + areaSweetSpot * 0.55 + angle * 1.25 + contourBoost + pairBalance * 0.85 + centerScore * 0.2 - borderPenalty;
     }
 
@@ -1319,9 +1361,10 @@
       return s / 4;
     }
 
-    function isReasonableQuad(c, w, h) {
+    function isReasonableQuad(c, w, h, opts = {}) {
+      const cameraStrict = !!opts.cameraStrict;
       const areaPct = quadArea(c) / (w * h);
-      if (areaPct < 0.015 || areaPct > 0.98) return false;
+      if (areaPct < (cameraStrict ? 0.02 : 0.015) || areaPct > (cameraStrict ? 0.92 : 0.98)) return false;
       const pts = [c.tl, c.tr, c.br, c.bl];
       const minSide = Math.min(
         Math.hypot(c.tr.x - c.tl.x, c.tr.y - c.tl.y),
@@ -1332,8 +1375,13 @@
       if (minSide < Math.min(w, h) * 0.08) return false;
       const score = rightAngleScore(pts);
       if (score < 0.16) return false;
-      const margin = Math.max(10, Math.min(w, h) * 0.015);
-      const borderHits = pts.filter(p => p.x < margin || p.x > (w - margin) || p.y < margin || p.y > (h - margin)).length;
+      const pairBalance = pairBalanceScore(pts);
+      if (pairBalance < (cameraStrict ? 0.25 : 0.2)) return false;
+      const borderHits = borderHitCount(pts, w, h, 0.015);
+      if (cameraStrict) {
+        if (borderHits >= 3) return false;
+        if (borderHits >= 2 && areaPct > 0.45) return false;
+      }
       if (borderHits >= 4 && areaPct < 0.85) return false;
       if (borderHits >= 3 && areaPct < 0.7) return false;
       return true;
@@ -1349,12 +1397,13 @@
       cv.rectangle(bin, new cv.Point(bin.cols - 1 - p, 0), new cv.Point(bin.cols - 1, bin.rows - 1), new cv.Scalar(0), -1);
     }
 
-    function fullImageCorners(img) {
+    function fullImageCorners(source) {
+      const { w, h } = getSourceSize(source);
       return {
         tl: { x: 0, y: 0 },
-        tr: { x: img.naturalWidth, y: 0 },
-        bl: { x: 0, y: img.naturalHeight },
-        br: { x: img.naturalWidth, y: img.naturalHeight }
+        tr: { x: w, y: 0 },
+        bl: { x: 0, y: h },
+        br: { x: w, y: h }
       };
     }
 
@@ -1675,17 +1724,52 @@
         vid.addEventListener('canplay', onReady);
       });
     }
+
+    function drawCamQuad(canvas, quad) {
+      if (!canvas || !quad) return;
+      const ctx = canvas.getContext('2d');
+      const pts = [quad.tl, quad.tr, quad.br, quad.bl];
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < 4; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(0,229,160,0.10)';
+      ctx.fill();
+      ctx.strokeStyle = '#00e5a0';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 4]);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     function camTick() {
       const vid = document.getElementById('vid'), hi = document.getElementById('cam-hi');
       if (!vid || !hi || vid.readyState < 2 || !hi.width || !hi.height) return;
-      hi.getContext('2d').drawImage(vid, 0, 0, hi.width, hi.height);
-      try { const r = scanner.highlightPaper(hi); hi.getContext('2d').drawImage(r, 0, 0, hi.width, hi.height); } catch (e) { }
+      const hctx = hi.getContext('2d');
+      hctx.drawImage(vid, 0, 0, hi.width, hi.height);
+      camTickCount++;
+      if (!camDetectBusy && camTickCount % CAM_DETECT_INTERVAL === 0) {
+        camDetectBusy = true;
+        try {
+          const detected = detectCornersSmart(hi, { cameraStrict: true });
+          camLastQuad = detected && detected.source !== 'full-image' ? detected.corners : null;
+        } catch (_) {
+          camLastQuad = null;
+        } finally {
+          camDetectBusy = false;
+        }
+      }
+      if (camLastQuad) drawCamQuad(hi, camLastQuad);
       fps++;
       const now = Date.now();
       if (now - fpsT >= 1000) { document.getElementById('fps-tag').textContent = fps + ' fps'; fps = 0; fpsT = now; }
     }
     function stopCam() {
       clearInterval(camInterval); camInterval = null;
+      camDetectBusy = false;
+      camTickCount = 0;
+      camLastQuad = null;
       if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
       const vid = document.getElementById('vid');
       const hi = document.getElementById('cam-hi');
@@ -1719,12 +1803,8 @@
       const dataUrl = tmp.toDataURL('image/png');
       const img = new Image();
       img.onload = () => {
-        srcImage = img;
-        setTab('upload');
-        setupEditor(img);
-        autoDetect();
-        stepTo(2);
-        toast('✓ 已截取到编辑区，可手动拖动角点后再矫正', 'ok');
+        enterEditorWithSource(img, { autoDetectAfterLoad: true, switchToUploadTab: true, sourceKind: 'camera-capture' });
+        toast('✓ 已截取并自动识别，可手动拖动角点微调', 'ok');
       };
       img.onerror = () => toast('截取失败，请重试', 'bad');
       img.src = dataUrl;
