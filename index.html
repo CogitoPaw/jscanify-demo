@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>JScanify 文档扫描演示</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #0c0d0f;
+    --surface: #141618;
+    --surface2: #1c1f23;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.13);
+    --accent: #00e5a0;
+    --accent2: #00b87a;
+    --accent-dim: rgba(0,229,160,0.12);
+    --text: #eef0f2;
+    --muted: #6b7280;
+    --danger: #ff4f6a;
+    --warning: #f59e0b;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Sora', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Header ── */
+  header {
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    background: var(--surface);
+    position: sticky; top: 0; z-index: 100;
+    backdrop-filter: blur(12px);
+  }
+  .logo-badge {
+    width: 36px; height: 36px;
+    background: var(--accent);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .logo-badge svg { width: 20px; height: 20px; color: #0c0d0f; }
+  header h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: -0.02em; }
+  header span { font-size: 0.75rem; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+  .status-dot {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.75rem; color: var(--muted);
+  }
+  .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--muted);
+    transition: background 0.3s;
+  }
+  .dot.ready { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .dot.loading { background: var(--warning); animation: pulse 1s infinite; }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* ── Layout ── */
+  main { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+
+  /* ── Mode Tabs ── */
+  .mode-tabs {
+    display: flex; gap: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 5px;
+    margin-bottom: 2rem;
+    width: fit-content;
+  }
+  .tab-btn {
+    padding: 8px 20px;
+    border: none; cursor: pointer;
+    border-radius: 8px;
+    font-family: 'Sora', sans-serif;
+    font-size: 0.875rem; font-weight: 500;
+    color: var(--muted);
+    background: transparent;
+    transition: all 0.2s;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .tab-btn.active {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid rgba(0,229,160,0.25);
+  }
+  .tab-btn:hover:not(.active) { color: var(--text); background: var(--surface2); }
+
+  /* ── Grid ── */
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+
+  /* ── Panel ── */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+  .panel-header {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 0.8rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted);
+  }
+  .panel-header span { display: flex; align-items: center; gap: 6px; }
+  .panel-body { padding: 1.25rem; }
+
+  /* ── Upload zone ── */
+  .upload-zone {
+    border: 1.5px dashed var(--border2);
+    border-radius: 12px;
+    padding: 3rem 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+  }
+  .upload-zone:hover, .upload-zone.dragover {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+  }
+  .upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .upload-icon { font-size: 2.5rem; margin-bottom: 0.75rem; }
+  .upload-zone p { color: var(--muted); font-size: 0.875rem; line-height: 1.6; }
+  .upload-zone strong { color: var(--accent); }
+
+  /* ── Canvas area ── */
+  .canvas-wrap {
+    position: relative;
+    background: var(--surface2);
+    border-radius: 12px;
+    overflow: hidden;
+    min-height: 200px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .canvas-wrap canvas, .canvas-wrap img, .canvas-wrap video {
+    max-width: 100%; max-height: 400px;
+    display: block; border-radius: 8px;
+  }
+  .canvas-placeholder {
+    color: var(--muted); font-size: 0.875rem; text-align: center;
+    padding: 3rem; line-height: 1.8;
+  }
+
+  /* ── Camera mode ── */
+  #camera-section { display: none; }
+  #upload-section { display: block; }
+
+  .camera-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 768px) { .camera-grid { grid-template-columns: 1fr; } }
+
+  /* ── Controls ── */
+  .controls {
+    margin-top: 1rem;
+    display: flex; gap: 8px; flex-wrap: wrap;
+  }
+  .btn {
+    padding: 8px 18px;
+    border-radius: 8px;
+    border: 1px solid var(--border2);
+    font-family: 'Sora', sans-serif;
+    font-size: 0.8rem; font-weight: 500;
+    cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
+    transition: all 0.15s;
+    color: var(--text);
+    background: var(--surface2);
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn:active { transform: scale(0.97); }
+  .btn.primary {
+    background: var(--accent);
+    color: #0c0d0f;
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  .btn.primary:hover { background: var(--accent2); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── Settings sliders ── */
+  .settings-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;
+    margin-top: 1rem;
+  }
+  .setting-item label {
+    display: block; font-size: 0.75rem; color: var(--muted);
+    margin-bottom: 4px; font-family: 'JetBrains Mono', monospace;
+  }
+  .setting-item input[type=range] { width: 100%; accent-color: var(--accent); }
+  .setting-item .val {
+    font-size: 0.75rem; color: var(--accent);
+    font-family: 'JetBrains Mono', monospace;
+    float: right;
+  }
+
+  /* ── Result actions ── */
+  .result-actions {
+    margin-top: 0.75rem;
+    display: flex; gap: 8px; flex-wrap: wrap;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+  }
+  .tag {
+    font-size: 0.7rem;
+    padding: 3px 10px;
+    border-radius: 99px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .tag.green { background: rgba(0,229,160,0.12); color: var(--accent); border: 1px solid rgba(0,229,160,0.2); }
+  .tag.gray { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+
+  /* ── Metrics bar ── */
+  .metrics {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border-radius: 12px; overflow: hidden;
+    margin-bottom: 1.5rem;
+  }
+  .metric {
+    background: var(--surface);
+    padding: 1rem 1.25rem;
+    text-align: center;
+  }
+  .metric .num { font-size: 1.5rem; font-weight: 700; color: var(--accent); }
+  .metric .lbl { font-size: 0.7rem; color: var(--muted); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+  /* ── Toast ── */
+  #toast {
+    position: fixed; bottom: 2rem; right: 2rem;
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 10px;
+    padding: 0.75rem 1.25rem;
+    font-size: 0.875rem;
+    transform: translateY(80px); opacity: 0;
+    transition: all 0.3s;
+    z-index: 999;
+    max-width: 300px;
+  }
+  #toast.show { transform: translateY(0); opacity: 1; }
+  #toast.success { border-color: rgba(0,229,160,0.4); }
+  #toast.error { border-color: rgba(255,79,106,0.4); color: var(--danger); }
+
+  /* ── Loading overlay ── */
+  .loading-overlay {
+    position: absolute; inset: 0;
+    background: rgba(12,13,15,0.8);
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 12px;
+    z-index: 10;
+    display: none;
+  }
+  .spinner {
+    width: 32px; height: 32px;
+    border: 2.5px solid var(--border2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Footer ── */
+  footer {
+    margin-top: 3rem;
+    padding: 1.5rem 2rem;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  .corner-badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    padding: 2px 8px;
+    border-radius: 99px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid rgba(0,229,160,0.2);
+    font-family: 'JetBrains Mono', monospace;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-badge">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2"/>
+      <path d="M7 7l10 0M7 12l10 0M7 17l6 0"/>
+    </svg>
+  </div>
+  <div>
+    <h1>JScanify Demo <span class="corner-badge">v0.1</span></h1>
+    <span>文档扫描 · 透视矫正 · 实时检测</span>
+  </div>
+  <div class="status-dot">
+    <div class="dot loading" id="status-dot"></div>
+    <span id="status-text">加载 OpenCV...</span>
+  </div>
+</header>
+
+<main>
+  <!-- Metrics -->
+  <div class="metrics">
+    <div class="metric">
+      <div class="num" id="m-scans">0</div>
+      <div class="lbl">已扫描次数</div>
+    </div>
+    <div class="metric">
+      <div class="num" id="m-mode">图片</div>
+      <div class="lbl">当前模式</div>
+    </div>
+    <div class="metric">
+      <div class="num" id="m-ms">—</div>
+      <div class="lbl">处理耗时(ms)</div>
+    </div>
+  </div>
+
+  <!-- Mode Tabs -->
+  <div class="mode-tabs">
+    <button class="tab-btn active" onclick="switchMode('upload')" id="tab-upload">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      上传图片
+    </button>
+    <button class="tab-btn" onclick="switchMode('camera')" id="tab-camera">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+      摄像头实时
+    </button>
+  </div>
+
+  <!-- ═══ Upload Mode ═══ -->
+  <div id="upload-section">
+    <div class="grid">
+      <!-- Input -->
+      <div class="panel">
+        <div class="panel-header">
+          <span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+            原始图片
+          </span>
+          <span class="tag gray" id="img-size">—</span>
+        </div>
+        <div class="panel-body">
+          <div class="upload-zone" id="drop-zone">
+            <input type="file" accept="image/*" id="file-input" />
+            <div class="upload-icon">📄</div>
+            <p><strong>点击上传</strong>或拖拽图片到此处<br>支持 JPG、PNG、HEIC 等格式</p>
+          </div>
+
+          <div class="canvas-wrap" id="preview-wrap" style="display:none; margin-top:1rem;">
+            <img id="preview-img" alt="原图预览" />
+          </div>
+
+          <div class="controls" style="margin-top:1rem;">
+            <button class="btn primary" id="btn-scan" onclick="runScan()" disabled>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              扫描文档
+            </button>
+            <button class="btn" id="btn-highlight" onclick="runHighlight()" disabled>边缘高亮</button>
+            <button class="btn" id="btn-clear" onclick="clearAll()">清除</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Output -->
+      <div class="panel">
+        <div class="panel-header">
+          <span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            扫描结果
+          </span>
+          <span class="tag green" id="result-tag" style="display:none">已处理</span>
+        </div>
+        <div class="panel-body">
+          <div class="canvas-wrap" id="result-wrap">
+            <div class="loading-overlay" id="result-loading">
+              <div class="spinner"></div>
+            </div>
+            <div class="canvas-placeholder" id="result-placeholder">
+              扫描结果将显示在这里<br>
+              <span style="font-size:0.75rem;margin-top:0.5rem;display:block">支持透视矫正 · 去畸变</span>
+            </div>
+            <canvas id="result-canvas" style="display:none"></canvas>
+          </div>
+
+          <div class="result-actions" id="result-actions" style="display:none;">
+            <button class="btn" onclick="downloadResult()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              下载 PNG
+            </button>
+            <button class="btn" onclick="copyToClipboard()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              复制图片
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div class="panel" style="margin-top:1.5rem;">
+      <div class="panel-header">
+        <span>⚙ 输出参数</span>
+      </div>
+      <div class="panel-body">
+        <div class="settings-grid">
+          <div class="setting-item">
+            <label>输出宽度 <span class="val" id="w-val">595</span>px</label>
+            <input type="range" min="200" max="1200" value="595" id="out-w" oninput="document.getElementById('w-val').textContent=this.value" />
+          </div>
+          <div class="setting-item">
+            <label>输出高度 <span class="val" id="h-val">842</span>px</label>
+            <input type="range" min="200" max="1600" value="842" id="out-h" oninput="document.getElementById('h-val').textContent=this.value" />
+          </div>
+        </div>
+        <p style="font-size:0.75rem;color:var(--muted);margin-top:0.75rem;">默认 595×842 = A4 尺寸（72dpi）</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Camera Mode ═══ -->
+  <div id="camera-section">
+    <div class="camera-grid">
+      <div class="panel">
+        <div class="panel-header">
+          <span>📹 实时摄像头</span>
+          <span class="tag gray" id="fps-tag">— fps</span>
+        </div>
+        <div class="panel-body">
+          <div class="canvas-wrap">
+            <video id="video" autoplay playsinline muted style="display:none;width:100%;"></video>
+            <canvas id="cam-canvas" style="display:none;width:100%;"></canvas>
+            <div class="canvas-placeholder" id="cam-placeholder">摄像头未启动</div>
+          </div>
+          <div class="controls">
+            <button class="btn primary" id="btn-start-cam" onclick="startCamera()">启动摄像头</button>
+            <button class="btn" id="btn-stop-cam" onclick="stopCamera()" disabled>停止</button>
+            <button class="btn" id="btn-capture" onclick="captureFrame()" disabled>截取并扫描</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <span>🟢 边缘检测预览</span>
+        </div>
+        <div class="panel-body">
+          <div class="canvas-wrap">
+            <canvas id="highlight-canvas" style="display:none;width:100%;"></canvas>
+            <div class="canvas-placeholder" id="hl-placeholder">启动摄像头后实时显示检测效果</div>
+          </div>
+          <p style="font-size:0.75rem;color:var(--muted);margin-top:0.75rem;">绿色轮廓 = 检测到文档边缘</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:1.5rem;" id="cam-result-panel" style="display:none">
+      <div class="panel-header"><span>📋 截取结果</span></div>
+      <div class="panel-body">
+        <div class="canvas-wrap">
+          <canvas id="cam-result-canvas"></canvas>
+          <div class="canvas-placeholder" id="cam-result-placeholder">点击"截取并扫描"获取矫正图片</div>
+        </div>
+        <div class="result-actions">
+          <button class="btn" onclick="downloadCamResult()">下载 PNG</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  基于 <a href="https://github.com/ColonelParrot/jscanify" target="_blank">jscanify</a> 和
+  <a href="https://opencv.org/" target="_blank">OpenCV.js</a> 构建 ·
+  纯前端运行 · 图片不上传服务器
+</footer>
+
+<div id="toast"></div>
+
+<!-- Dependencies -->
+<script src="https://docs.opencv.org/4.7.0/opencv.js" async></script>
+<script src="https://cdn.jsdelivr.net/gh/ColonelParrot/jscanify@master/src/jscanify.min.js"></script>
+
+<script>
+/* ─── State ─── */
+let scanner = null;
+let cvReady = false;
+let scanCount = 0;
+let currentMode = 'upload';
+let cameraStream = null;
+let highlightInterval = null;
+let fpsCounter = 0; let lastFpsTime = Date.now();
+
+/* ─── OpenCV ready ─── */
+function checkOpenCV() {
+  if (typeof cv !== 'undefined' && cv.Mat) {
+    cvReady = true;
+    scanner = new jscanify();
+    document.getElementById('status-dot').className = 'dot ready';
+    document.getElementById('status-text').textContent = 'OpenCV 就绪';
+    showToast('✓ 扫描引擎加载完成', 'success');
+  } else {
+    setTimeout(checkOpenCV, 300);
+  }
+}
+window.addEventListener('load', () => setTimeout(checkOpenCV, 500));
+
+/* ─── Toast ─── */
+function showToast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'show ' + type;
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.className = ''; }, 2800);
+}
+
+/* ─── Mode switch ─── */
+function switchMode(mode) {
+  currentMode = mode;
+  document.getElementById('upload-section').style.display = mode === 'upload' ? 'block' : 'none';
+  document.getElementById('camera-section').style.display = mode === 'camera' ? 'block' : 'none';
+  document.getElementById('tab-upload').className = 'tab-btn ' + (mode === 'upload' ? 'active' : '');
+  document.getElementById('tab-camera').className = 'tab-btn ' + (mode === 'camera' ? 'active' : '');
+  document.getElementById('m-mode').textContent = mode === 'upload' ? '图片' : '摄像头';
+  if (mode === 'upload') stopCamera();
+}
+
+/* ─── File upload ─── */
+const fileInput = document.getElementById('file-input');
+const dropZone = document.getElementById('drop-zone');
+
+fileInput.addEventListener('change', e => loadFile(e.target.files[0]));
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+
+function loadFile(file) {
+  if (!file || !file.type.startsWith('image/')) { showToast('请选择图片文件', 'error'); return; }
+  const url = URL.createObjectURL(file);
+  const img = document.getElementById('preview-img');
+  img.src = url;
+  img.onload = () => {
+    document.getElementById('preview-wrap').style.display = 'flex';
+    document.getElementById('drop-zone').style.display = 'none';
+    document.getElementById('img-size').textContent = img.naturalWidth + '×' + img.naturalHeight;
+    document.getElementById('btn-scan').disabled = false;
+    document.getElementById('btn-highlight').disabled = false;
+  };
+}
+
+/* ─── Run Scan ─── */
+function runScan() {
+  if (!cvReady) { showToast('请等待 OpenCV 加载完成', 'error'); return; }
+  const img = document.getElementById('preview-img');
+  if (!img.src) return;
+
+  showLoading(true);
+  setTimeout(() => {
+    try {
+      const t0 = performance.now();
+      const w = parseInt(document.getElementById('out-w').value);
+      const h = parseInt(document.getElementById('out-h').value);
+      const result = scanner.extractPaper(img, w, h);
+      const ms = Math.round(performance.now() - t0);
+
+      showResult(result, ms);
+      scanCount++;
+      document.getElementById('m-scans').textContent = scanCount;
+      document.getElementById('m-ms').textContent = ms;
+      showToast('✓ 扫描完成，耗时 ' + ms + 'ms', 'success');
+    } catch(e) {
+      showLoading(false);
+      showToast('未检测到文档边缘，请尝试对比度更高的图片', 'error');
+    }
+  }, 50);
+}
+
+function runHighlight() {
+  if (!cvReady) { showToast('请等待 OpenCV 加载完成', 'error'); return; }
+  const img = document.getElementById('preview-img');
+  if (!img.src) return;
+
+  showLoading(true);
+  setTimeout(() => {
+    try {
+      const t0 = performance.now();
+      const result = scanner.highlightPaper(img);
+      const ms = Math.round(performance.now() - t0);
+      showResult(result, ms);
+      document.getElementById('m-ms').textContent = ms;
+      showToast('✓ 边缘高亮完成', 'success');
+    } catch(e) {
+      showLoading(false);
+      showToast('检测失败，请换一张图片', 'error');
+    }
+  }, 50);
+}
+
+function showLoading(on) {
+  document.getElementById('result-loading').style.display = on ? 'flex' : 'none';
+}
+
+function showResult(canvas, ms) {
+  showLoading(false);
+  const resultCanvas = document.getElementById('result-canvas');
+  const ctx = resultCanvas.getContext('2d');
+  resultCanvas.width = canvas.width;
+  resultCanvas.height = canvas.height;
+  ctx.drawImage(canvas, 0, 0);
+  document.getElementById('result-placeholder').style.display = 'none';
+  resultCanvas.style.display = 'block';
+  document.getElementById('result-tag').style.display = 'inline';
+  document.getElementById('result-actions').style.display = 'flex';
+}
+
+function clearAll() {
+  document.getElementById('preview-img').src = '';
+  document.getElementById('preview-wrap').style.display = 'none';
+  document.getElementById('drop-zone').style.display = 'flex';
+  document.getElementById('result-canvas').style.display = 'none';
+  document.getElementById('result-placeholder').style.display = 'block';
+  document.getElementById('result-tag').style.display = 'none';
+  document.getElementById('result-actions').style.display = 'none';
+  document.getElementById('btn-scan').disabled = true;
+  document.getElementById('btn-highlight').disabled = true;
+  document.getElementById('img-size').textContent = '—';
+  fileInput.value = '';
+}
+
+/* ─── Download ─── */
+function downloadResult() {
+  const c = document.getElementById('result-canvas');
+  const a = document.createElement('a');
+  a.download = 'scanned-' + Date.now() + '.png';
+  a.href = c.toDataURL('image/png');
+  a.click();
+  showToast('✓ 图片已下载', 'success');
+}
+
+function downloadCamResult() {
+  const c = document.getElementById('cam-result-canvas');
+  const a = document.createElement('a');
+  a.download = 'captured-' + Date.now() + '.png';
+  a.href = c.toDataURL('image/png');
+  a.click();
+}
+
+async function copyToClipboard() {
+  try {
+    const c = document.getElementById('result-canvas');
+    c.toBlob(async blob => {
+      await navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
+      showToast('✓ 已复制到剪贴板', 'success');
+    });
+  } catch(e) {
+    showToast('复制失败，请手动保存', 'error');
+  }
+}
+
+/* ─── Camera ─── */
+async function startCamera() {
+  if (!cvReady) { showToast('请等待 OpenCV 加载完成', 'error'); return; }
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } });
+    const video = document.getElementById('video');
+    video.srcObject = cameraStream;
+    video.style.display = 'block';
+    document.getElementById('cam-placeholder').style.display = 'none';
+    document.getElementById('btn-start-cam').disabled = true;
+    document.getElementById('btn-stop-cam').disabled = false;
+    document.getElementById('btn-capture').disabled = false;
+
+    video.onloadedmetadata = () => {
+      const camCanvas = document.getElementById('cam-canvas');
+      const hlCanvas = document.getElementById('highlight-canvas');
+      camCanvas.width = video.videoWidth;
+      camCanvas.height = video.videoHeight;
+      hlCanvas.width = video.videoWidth;
+      hlCanvas.height = video.videoHeight;
+      camCanvas.style.display = 'none';
+      hlCanvas.style.display = 'block';
+      document.getElementById('hl-placeholder').style.display = 'none';
+      startHighlightLoop();
+    };
+  } catch(e) {
+    showToast('无法访问摄像头：' + e.message, 'error');
+  }
+}
+
+function startHighlightLoop() {
+  const video = document.getElementById('video');
+  const camCanvas = document.getElementById('cam-canvas');
+  const hlCanvas = document.getElementById('highlight-canvas');
+  const camCtx = camCanvas.getContext('2d');
+  const hlCtx = hlCanvas.getContext('2d');
+
+  highlightInterval = setInterval(() => {
+    if (!cameraStream) return;
+    camCtx.drawImage(video, 0, 0, camCanvas.width, camCanvas.height);
+    try {
+      const result = scanner.highlightPaper(camCanvas);
+      hlCtx.clearRect(0, 0, hlCanvas.width, hlCanvas.height);
+      hlCtx.drawImage(result, 0, 0, hlCanvas.width, hlCanvas.height);
+    } catch(e) {}
+
+    fpsCounter++;
+    const now = Date.now();
+    if (now - lastFpsTime >= 1000) {
+      document.getElementById('fps-tag').textContent = fpsCounter + ' fps';
+      fpsCounter = 0;
+      lastFpsTime = now;
+    }
+  }, 100);
+}
+
+function stopCamera() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t => t.stop());
+    cameraStream = null;
+  }
+  clearInterval(highlightInterval);
+  highlightInterval = null;
+  document.getElementById('video').style.display = 'none';
+  document.getElementById('cam-canvas').style.display = 'none';
+  document.getElementById('highlight-canvas').style.display = 'none';
+  document.getElementById('cam-placeholder').style.display = 'block';
+  document.getElementById('hl-placeholder').style.display = 'block';
+  document.getElementById('btn-start-cam').disabled = false;
+  document.getElementById('btn-stop-cam').disabled = true;
+  document.getElementById('btn-capture').disabled = true;
+  document.getElementById('fps-tag').textContent = '— fps';
+}
+
+function captureFrame() {
+  const camCanvas = document.getElementById('cam-canvas');
+  const video = document.getElementById('video');
+  const ctx = camCanvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, camCanvas.width, camCanvas.height);
+
+  try {
+    const w = 595, h = 842;
+    const result = scanner.extractPaper(camCanvas, w, h);
+    const rc = document.getElementById('cam-result-canvas');
+    rc.width = result.width;
+    rc.height = result.height;
+    rc.getContext('2d').drawImage(result, 0, 0);
+    rc.style.display = 'block';
+    document.getElementById('cam-result-placeholder').style.display = 'none';
+    scanCount++;
+    document.getElementById('m-scans').textContent = scanCount;
+    showToast('✓ 截取并扫描成功', 'success');
+  } catch(e) {
+    showToast('未检测到文档，请调整角度后重试', 'error');
+  }
+}
+</script>
+</body>
+</html>
