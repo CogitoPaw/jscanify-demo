@@ -125,94 +125,6 @@
       padding: 1.5rem 2rem
     }
 
-    .steps {
-      display: flex;
-      align-items: center;
-      margin-bottom: 1.75rem;
-      overflow: hidden;
-      border-radius: 10px;
-      border: 1px solid var(--border)
-    }
-
-    .step {
-      flex: 1;
-      padding: .6rem .75rem;
-      font-size: .72rem;
-      font-weight: 500;
-      text-align: center;
-      color: var(--muted);
-      background: var(--surface);
-      border-right: 1px solid var(--border);
-      cursor: default;
-      transition: all .2s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 5px
-    }
-
-    .step:last-child {
-      border-right: none
-    }
-
-    .step.active {
-      background: var(--accent-dim);
-      color: var(--accent)
-    }
-
-    .step.done {
-      color: var(--accent2);
-      background: rgba(0, 184, 122, .05)
-    }
-
-    .step-num {
-      width: 17px;
-      height: 17px;
-      border-radius: 50%;
-      border: 1.5px solid currentColor;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: .6rem;
-      flex-shrink: 0
-    }
-
-    .step.done .step-num {
-      background: var(--accent2);
-      border-color: var(--accent2);
-      color: #000
-    }
-
-    .metrics {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 1px;
-      background: var(--border);
-      border-radius: 12px;
-      overflow: hidden;
-      margin-bottom: 1.5rem
-    }
-
-    .metric {
-      background: var(--surface);
-      padding: .875rem 1rem;
-      text-align: center
-    }
-
-    .metric .n {
-      font-size: 1.3rem;
-      font-weight: 700;
-      color: var(--accent)
-    }
-
-    .metric .l {
-      font-size: .65rem;
-      color: var(--muted);
-      margin-top: 2px;
-      text-transform: uppercase;
-      letter-spacing: .06em
-    }
-
     .tabs {
       display: flex;
       gap: 5px;
@@ -445,31 +357,6 @@
       background: rgba(255, 79, 106, .1)
     }
 
-    .srow {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1rem;
-      margin-top: 1rem
-    }
-
-    .si label {
-      display: block;
-      font-size: .7rem;
-      color: var(--muted);
-      margin-bottom: 3px;
-      font-family: 'JetBrains Mono', monospace
-    }
-
-    .si .v {
-      float: right;
-      color: var(--accent)
-    }
-
-    .si input[type=range] {
-      width: 100%;
-      accent-color: var(--accent)
-    }
-
     .info {
       border-radius: 9px;
       padding: .7rem 1rem;
@@ -589,42 +476,8 @@
   </header>
 
   <main>
-    <div class="metrics">
-      <div class="metric">
-        <div class="n" id="m-scans">0</div>
-        <div class="l">已扫描</div>
-      </div>
-      <div class="metric">
-        <div class="n" id="m-ms">—</div>
-        <div class="l">耗时 ms</div>
-      </div>
-      <div class="metric">
-        <div class="n" id="m-mode">—</div>
-        <div class="l">角点来源</div>
-      </div>
-      <div class="metric">
-        <div class="n" id="m-conf">—</div>
-        <div class="l">覆盖面积</div>
-      </div>
-    </div>
-
-    <div class="steps">
-      <div class="step active" id="st1">
-        <div class="step-num">1</div>上传图片
-      </div>
-      <div class="step" id="st2">
-        <div class="step-num">2</div>自动检测 / 手动调整角点
-      </div>
-      <div class="step" id="st3">
-        <div class="step-num">3</div>执行矫正
-      </div>
-      <div class="step" id="st4">
-        <div class="step-num">4</div>下载结果
-      </div>
-    </div>
-
     <div class="tabs">
-      <button class="tb active" id="tab-up" onclick="setTab('upload')">📁 上传图片</button>
+      <button class="tb active" id="tab-up" onclick="setTab('upload')">📁 图片</button>
       <button class="tb" id="tab-cam" onclick="setTab('camera')">📹 摄像头</button>
     </div>
 
@@ -636,7 +489,7 @@
         <div class="panel">
           <div class="ph">
             <span>原图 &amp; 角点编辑器</span>
-            <span class="tag gray" id="corner-tag">未检测</span>
+            <span class="tag gray" id="corner-tag">待识别</span>
           </div>
           <div class="pb">
 
@@ -683,7 +536,7 @@
             <div class="result-outer" id="result-outer-main">
               <div class="result-placeholder" id="res-ph">
                 设定角点后自动实时预览<br>
-                <span style="font-size:.72rem;margin-top:.4rem;display:block">透视变换 · 去畸变（无需手动点击）</span>
+                <span style="font-size:.72rem;margin-top:.4rem;display:block">自动透视矫正与去畸变（无需额外操作）</span>
               </div>
               <canvas id="result-canvas" style="display:none"></canvas>
             </div>
@@ -703,21 +556,8 @@
               </div>
             </div>
 
-            <!-- Output size -->
-            <div class="srow">
-              <div class="si">
-                <label>输出宽度 <span class="v" id="wv">595</span>px</label>
-                <input type="range" min="300" max="1600" value="595" id="ow"
-                  oninput="document.getElementById('wv').textContent=this.value;scheduleLivePreview()" />
-              </div>
-              <div class="si">
-                <label>输出高度 <span class="v" id="hv">842</span>px</label>
-                <input type="range" min="300" max="2000" value="842" id="oh"
-                  oninput="document.getElementById('hv').textContent=this.value;scheduleLivePreview()" />
-              </div>
-            </div>
             <p style="font-size:.68rem;color:var(--muted);margin-top:.4rem">
-              A4=595×842 &nbsp; A3=842×1191 &nbsp; Letter=612×792
+              输出尺寸已固定：A4（595×842）
             </p>
           </div>
         </div>
@@ -740,7 +580,7 @@
             <div class="btns">
               <button class="btn primary" id="btn-cs" onclick="startCam()">启动摄像头</button>
               <button class="btn" id="btn-cx" onclick="stopCam()" disabled>停止</button>
-              <button class="btn" id="btn-cc" onclick="captureCam()" disabled>📷 截取并自动识别</button>
+              <button class="btn" id="btn-cc" onclick="captureCam()" disabled>📷 拍照并识别</button>
             </div>
           </div>
         </div>
@@ -777,7 +617,6 @@
     let dispScale = 1;        // display pixels per source pixel
     let corners = null;       // {tl,tr,bl,br} in SOURCE IMAGE coords
     let dragIdx = -1;
-    let scanCount = 0;
     let resultZoom = 1;
     let livePreviewTimer = null;
     let livePreviewBusy = false;
@@ -793,6 +632,8 @@
     const CAM_STABLE_DRIFT = 0.12;
     const CAM_REPLACE_SCORE_DELTA = 0.18;
     const CAM_CLEAR_MISS_COUNT = 4;
+    const OUTPUT_WIDTH = 595;
+    const OUTPUT_HEIGHT = 842;
     const DEBUG_MODE = /(?:\?|&)debug=1(?:&|$)/.test(location.search);
 
     const ORDER = ['tl', 'tr', 'br', 'bl'];
@@ -860,7 +701,6 @@
         corners = cloneQuad(initialCorners);
         drawOverlay();
       }
-      stepTo(2);
       if (!autoDetectAfterLoad) return;
       if (cvReady) {
         setTimeout(() => autoDetect({ silentNoCv: true }), 30);
@@ -904,8 +744,6 @@
 
       drawOverlay();
       bindOverlay(ov);
-      document.getElementById('m-mode').textContent = '手动';
-      document.getElementById('m-conf').textContent = '—';
       scheduleLivePreview(true);
     }
 
@@ -1023,7 +861,6 @@
           ip.y = Math.max(pad, Math.min(srcImage.naturalHeight - pad, ip.y));
           corners[ORDER[dragIdx]] = ip;
           drawOverlay();
-          document.getElementById('m-mode').textContent = '手动';
           document.getElementById('corner-tag').className = 'tag y';
           document.getElementById('corner-tag').textContent = '手动调整';
           scheduleLivePreview();
@@ -1094,37 +931,33 @@
           const s = getSourceSize(srcImage);
           const imgArea = s.w * s.h;
           const pct = Math.round(area / imgArea * 100);
-          document.getElementById('m-conf').textContent = pct + '%';
-          document.getElementById('m-mode').textContent = '自动';
           document.getElementById('corner-tag').className = 'tag g';
-          document.getElementById('corner-tag').textContent = '自动检测 ' + pct + '%';
+          document.getElementById('corner-tag').textContent = '已自动识别';
           drawOverlay();
           scheduleLivePreview(true);
           renderDebugInfo('auto', detected);
 
           if (detected.source === 'full-image') {
-            showWarn('⚠ 未稳定识别到文档边缘，已回退为全图。请手动拖动 4 个角点后再执行矫正。');
+            showWarn('⚠ 未识别到清晰的文档边缘，已切换为整图范围。请拖动 4 个角点框住文档。');
             document.getElementById('corner-tag').className = 'tag y';
-            document.getElementById('corner-tag').textContent = '全图回退';
-            toast('未稳定识别到边缘，已回退为全图可手动调整', 'bad');
+            document.getElementById('corner-tag').textContent = '请手动框选';
+            toast('未识别到清晰边缘，已切换为整图范围，可手动调整', 'bad');
           } else if (pct < 8) {
-            showWarn('⚠ 检测区域仅占 ' + pct + '%，可能不准确。请手动拖动角点（绿色圆点）调整，或换一张背景对比更高的图片。');
-            toast('检测结果偏小，请手动微调角点', 'bad');
+            showWarn('⚠ 当前识别框约占画面 ' + pct + '%，可能偏小。请拖动角点微调，或换一张文档更清晰、对比更高的图片。');
+            toast('识别框偏小，建议手动微调角点', 'bad');
           } else {
             const via = detected.source === 'cv-fallback' ? '（已启用增强轮廓检测）' : '';
-            showGreen('✓ 检测成功，覆盖 ' + pct + '% 面积' + via + '。如有偏差请拖动角点微调，右侧会实时更新预览。');
-            toast('✓ 自动检测成功 ' + pct + '%', 'ok');
+            showGreen('✓ 已自动识别文档边缘，识别框约占画面 ' + pct + '%' + via + '。如有偏差请拖动角点微调，右侧会实时更新预览。');
+            toast('✓ 已自动识别文档边缘', 'ok');
           }
         } catch (e) {
           corners = fullImageCorners(srcImage);
           drawOverlay();
-          showWarn('⚠ 自动检测失败，已回退为全图。请手动拖动 4 个角点框住文档后再执行矫正。');
+          showWarn('⚠ 自动识别失败，已切换为整图范围。请手动拖动 4 个角点框住文档。');
           document.getElementById('corner-tag').className = 'tag y';
-          document.getElementById('corner-tag').textContent = '全图回退';
-          document.getElementById('m-mode').textContent = '手动';
-          document.getElementById('m-conf').textContent = '100%';
+          document.getElementById('corner-tag').textContent = '请手动框选';
           scheduleLivePreview(true);
-          toast('自动检测失败，已回退为全图可手动调整', 'bad');
+          toast('自动识别失败，已切换为整图范围，可手动调整', 'bad');
           renderDebugInfo('auto', null);
         }
         document.getElementById('sdot').className = 'dot ready';
@@ -1558,8 +1391,6 @@
       const W = srcImage.naturalWidth, H = srcImage.naturalHeight;
       corners = { tl: { x: 0, y: 0 }, tr: { x: W, y: 0 }, bl: { x: 0, y: H }, br: { x: W, y: H } };
       drawOverlay();
-      document.getElementById('m-mode').textContent = '手动';
-      document.getElementById('m-conf').textContent = '100%';
       document.getElementById('corner-tag').className = 'tag gray';
       document.getElementById('corner-tag').textContent = '全图';
       hideInfo();
@@ -1640,8 +1471,8 @@
       setTimeout(() => {
         try {
           const t0 = performance.now();
-          const ow = parseInt(document.getElementById('ow').value);
-          const oh = parseInt(document.getElementById('oh').value);
+          const ow = OUTPUT_WIDTH;
+          const oh = OUTPUT_HEIGHT;
           const result = scanner.extractPaper(srcImage, ow, oh, {
             topLeftCorner: corners.tl,
             topRightCorner: corners.tr,
@@ -1659,12 +1490,6 @@
           document.getElementById('res-ph').style.display = 'none';
           document.getElementById('res-tag').style.display = 'inline';
           document.getElementById('res-btns').style.display = 'block';
-          document.getElementById('m-ms').textContent = ms;
-          if (!hadResult) {
-            scanCount++;
-            document.getElementById('m-scans').textContent = scanCount;
-          }
-          stepTo(4);
           if (!silent) toast('✓ 矫正完成，耗时 ' + ms + 'ms', 'ok');
         } catch (e) {
           if (!silent) toast('矫正失败：' + e.message, 'bad');
@@ -1713,13 +1538,10 @@
       document.getElementById('res-tag').style.display = 'none';
       document.getElementById('res-btns').style.display = 'none';
       document.getElementById('corner-tag').className = 'tag gray';
-      document.getElementById('corner-tag').textContent = '未检测';
-      document.getElementById('m-conf').textContent = '—';
-      document.getElementById('m-mode').textContent = '—';
+      document.getElementById('corner-tag').textContent = '待识别';
       const dbg = document.getElementById('debug-info');
       if (dbg) dbg.style.display = 'none';
       fileInp.value = '';
-      stepTo(1);
     }
 
     function hasResultCanvas() {
@@ -1778,16 +1600,6 @@
       if (!hasResultCanvas()) { toast('请先生成预览结果', 'bad'); return; }
       resultZoom = 1;
       applyResultView();
-    }
-
-    /* ═══════════════════════════════════
-       STEPS UI
-    ═══════════════════════════════════ */
-    function stepTo(n) {
-      [1, 2, 3, 4].forEach(i => {
-        const el = document.getElementById('st' + i);
-        el.className = 'step' + (i === n ? ' active' : i < n ? ' done' : '');
-      });
     }
 
     /* ═══════════════════════════════════
@@ -2016,7 +1828,7 @@
           sourceKind: 'camera-capture',
           initialCorners: pendingCameraHintQuad
         });
-        toast('✓ 已截取并自动识别，可手动拖动角点微调', 'ok');
+        toast('✓ 已拍照并完成识别，可手动拖动角点微调', 'ok');
       };
       img.onerror = () => toast('截取失败，请重试', 'bad');
       img.src = dataUrl;
