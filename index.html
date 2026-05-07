@@ -304,6 +304,31 @@
       margin-top: .875rem
     }
 
+    .cam-actions {
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+      margin-top: .875rem
+    }
+
+    .cam-main-action {
+      margin-top: .6rem
+    }
+
+    .btn.capture {
+      background: linear-gradient(135deg, #0ea5e9, #0284c7);
+      border-color: #0284c7;
+      color: #fff;
+      font-weight: 700;
+      box-shadow: 0 6px 14px rgba(2, 132, 199, .25)
+    }
+
+    .btn.capture:hover {
+      background: linear-gradient(135deg, #0284c7, #0369a1);
+      border-color: #0369a1;
+      color: #fff
+    }
+
     .btn {
       padding: 7px 16px;
       border-radius: 8px;
@@ -452,6 +477,92 @@
       color: var(--accent);
       text-decoration: none
     }
+
+    @media (max-width: 640px) {
+      header {
+        padding: .55rem .75rem;
+        gap: .55rem
+      }
+
+      .logo {
+        width: 26px;
+        height: 26px;
+        border-radius: 7px
+      }
+
+      .logo svg {
+        width: 14px;
+        height: 14px
+      }
+
+      header h1 {
+        font-size: .88rem
+      }
+
+      header small {
+        display: none
+      }
+
+      .hright {
+        gap: .35rem;
+        font-size: .66rem
+      }
+
+      main {
+        padding: .8rem .75rem 5.5rem
+      }
+
+      .tabs {
+        width: 100%;
+        margin-bottom: .95rem
+      }
+
+      .tb {
+        flex: 1;
+        justify-content: center;
+        padding: 8px 10px
+      }
+
+      .panel {
+        border-radius: 12px
+      }
+
+      .ph {
+        padding: .72rem .85rem
+      }
+
+      .pb {
+        padding: .85rem
+      }
+
+      .cam-actions {
+        gap: 8px
+      }
+
+      .cam-actions .btn {
+        flex: 1;
+        justify-content: center;
+        min-height: 42px
+      }
+
+      .cam-main-action {
+        position: fixed;
+        left: .75rem;
+        right: .75rem;
+        bottom: calc(.75rem + env(safe-area-inset-bottom));
+        margin-top: 0;
+        z-index: 350
+      }
+
+      .cam-main-action .btn.capture {
+        width: 100%;
+        justify-content: center;
+        min-height: 50px;
+        font-size: .92rem;
+        border-radius: 12px;
+        box-shadow: 0 10px 22px rgba(2, 132, 199, .3)
+      }
+    }
   </style>
 </head>
 
@@ -577,14 +688,16 @@
               <canvas id="cam-hi" style="display:none;max-width:100%;max-height:420px;border-radius:8px"></canvas>
               <div class="editor-placeholder" id="cam-ph">摄像头未启动</div>
             </div>
-            <div class="btns">
+            <div class="cam-actions">
               <button class="btn primary" id="btn-cs" onclick="startCam()">启动摄像头</button>
               <button class="btn" id="btn-cx" onclick="stopCam()" disabled>停止</button>
-              <button class="btn" id="btn-cc" onclick="captureCam()" disabled>📷 拍照并识别</button>
+            </div>
+            <div class="cam-main-action">
+              <button class="btn capture" id="btn-cc" onclick="captureCam()" disabled>📷 一键拍照并识别</button>
             </div>
           </div>
         </div>
-        <div class="panel">
+        <div class="panel" id="cam-result-panel" style="display:none">
           <div class="ph"><span>截取结果</span></div>
           <div class="pb">
             <div class="result-outer" style="min-height:280px">
@@ -1607,6 +1720,21 @@
     ═══════════════════════════════════ */
     let camStream = null, camInterval = null, fps = 0, fpsT = Date.now();
 
+    function resetCamResultPanel() {
+      const panel = document.getElementById('cam-result-panel');
+      const canvas = document.getElementById('cam-result');
+      const ph = document.getElementById('cam-res-ph');
+      const dl = document.getElementById('btn-cdl');
+      if (panel) panel.style.display = 'none';
+      if (canvas) {
+        canvas.style.display = 'none';
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+      if (ph) ph.style.display = 'block';
+      if (dl) dl.disabled = true;
+    }
+
     async function startCam() {
       if (!cvReady) { toast('请等待 OpenCV 加载完成', 'bad'); return; }
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -1615,6 +1743,7 @@
       }
       try {
         stopCam();
+        resetCamResultPanel();
         camStream = await getCameraStreamWithFallback();
         const vid = document.getElementById('vid');
         vid.srcObject = camStream;
@@ -1818,6 +1947,19 @@
       const tmp = document.createElement('canvas');
       tmp.width = vid.videoWidth; tmp.height = vid.videoHeight;
       tmp.getContext('2d').drawImage(vid, 0, 0);
+      const camResultPanel = document.getElementById('cam-result-panel');
+      const camResultCanvas = document.getElementById('cam-result');
+      const camResultPh = document.getElementById('cam-res-ph');
+      const camDlBtn = document.getElementById('btn-cdl');
+      if (camResultCanvas) {
+        camResultCanvas.width = tmp.width;
+        camResultCanvas.height = tmp.height;
+        camResultCanvas.getContext('2d').drawImage(tmp, 0, 0);
+        camResultCanvas.style.display = 'block';
+      }
+      if (camResultPh) camResultPh.style.display = 'none';
+      if (camResultPanel) camResultPanel.style.display = 'block';
+      if (camDlBtn) camDlBtn.disabled = false;
       const dataUrl = tmp.toDataURL('image/png');
       const img = new Image();
       img.onload = () => {
